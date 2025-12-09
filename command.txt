@@ -1,7 +1,0 @@
-C:/Users/User/anaconda3/envs/pcsfinal/python.exe C:/Users/User/Desktop/PCS_final/OFDMsystem.py
-
-C:/Users/User/anaconda3/envs/pcsfinal/python.exe C:/Users/User/Desktop/PCS_final/LMLestimator.py
-
-C:/Users/User/anaconda3/envs/pcsfinal/python.exe C:/Users/User/Desktop/PCS_final/MMSE.py
-
-C:/Users/User/anaconda3/envs/pcsfinal/python.exe C:/Users/User/Desktop/PCS_final/main.py
