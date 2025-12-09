@@ -26,9 +26,9 @@ class OFDMSystem:
         # 計算導頻和數據的數量
         self.n_pilots = len(self.pilot_indices)
         self.n_data = len(self.data_indices)
-        
-        print(f"系統初始化: K={K}, CP={CP}, Pilot Spacing={pilot_spacing}")
-        print(f"導頻子載波數量: {self.n_pilots}, 數據子載波數量: {self.n_data}")
+
+        # print(f"系統初始化: K={K}, CP={CP}, Pilot Spacing={pilot_spacing}")
+        # print(f"導頻子載波數量: {self.n_pilots}, 數據子載波數量: {self.n_data}")
 
     def qpsk_mod(self, bits):
         """簡單的 QPSK 調變 (映射: 00->1+j, 01->-1+j, ... normalized)"""
