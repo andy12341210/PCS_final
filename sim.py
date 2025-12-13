@@ -23,7 +23,7 @@ def run_simulation_fig6():
     # 模擬參數
     snr_db_list = [-10, 0, 10]
     dataset_sizes = [40, 80, 120, 160, 200, 240, 280, 320, 360, 400]
-    num_monte_carlo = 1000 
+    num_monte_carlo = 1000
 
     res_proposed = np.zeros((len(snr_db_list), len(dataset_sizes)))
     res_accurate = np.zeros((len(snr_db_list), len(dataset_sizes)))
