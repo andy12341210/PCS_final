@@ -1,7 +1,3 @@
-這是一份為你的專案量身打造的 `README.md`。我根據你提供的程式碼結構，整理了專案功能、檔案說明、環境需求以及使用方法。
-
-你可以直接複製以下內容並存成 `README.md` 檔案。
-
 -----
 
 # OFDM Channel Estimation Simulation (LML / MMSE / DNN / ELM)
