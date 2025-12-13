@@ -14,6 +14,8 @@
       * **LS (Least Square)**：基於導頻（Pilot）的線性插值估測。
       * **MMSE (Minimum Mean Square Error)**：利用通道相關性矩陣的統計估測器。
       * **LML (Proposed Method)**：基於 PATDG (Pilot-Aided Training Data Generation) 的線性機器學習估測器。
+        * **PATDG (Pilot-Aided)**：僅利用導頻數據進行訓練。
+        * **DDTDG (Decision-Directed)**：**[New]** 利用解調後的判決資料 (Decision) 進行在線自我更新。
       * **ELM (Extreme Learning Machine)**：極限學習機估測器。
       * **DNN (Deep Neural Network)**：基於 PyTorch 的深度神經網路估測器。
   * **效能評估指標**：
