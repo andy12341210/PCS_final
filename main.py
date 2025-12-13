@@ -10,20 +10,37 @@ if not os.path.exists(RESULT_DIR):
     print(f"Created directory: {RESULT_DIR}")
 
 def plot_fig5():
-    x, res = run_simulation_fig5()
+    x, res_nmse, res_ber = run_simulation_fig5()
     
-    plt.figure(figsize=(8, 6))
-    plt.semilogy(x, res['ls'], 'k-s', label='LS estimation')
-    plt.semilogy(x, res['proposed'], 'r-v', label='Proposed (LML) estimation')
-    plt.semilogy(x, res['mmse'], 'b--*', label='MMSE estimation')
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
 
-    plt.xlabel('SNR (dB)')
-    plt.ylabel('NMSE')
-    plt.grid(True, which="both", ls="-", alpha=0.5)
-    plt.legend()
-    plt.title('Fig. 5 Reproduction: NMSE vs SNR')
+    # --- Plot 1: NMSE ---
+    ax1.semilogy(x, res_nmse['ls'], 'k-s', label='LS')
+    ax1.semilogy(x, res_nmse['proposed'], 'r-v', label='Proposed (PATDG)')
+    ax1.semilogy(x, res_nmse['ddtdg'], 'g-o', label='Proposed (DDTDG)') # 新增
+    ax1.semilogy(x, res_nmse['mmse'], 'b--*', label='MMSE')
+
+    ax1.set_xlabel('SNR (dB)')
+    ax1.set_ylabel('NMSE')
+    ax1.grid(True, which="both", ls="-", alpha=0.5)
+    ax1.legend()
+    ax1.set_title('Figure 5a: NMSE vs SNR')
+
+    # --- Plot 2: BER ---
+    ax2.semilogy(x, res_ber['ls'], 'k-s', label='LS')
+    ax2.semilogy(x, res_ber['proposed'], 'r-v', label='Proposed (PATDG)')
+    ax2.semilogy(x, res_ber['ddtdg'], 'g-o', label='Proposed (DDTDG)') # 新增
+    ax2.semilogy(x, res_ber['mmse'], 'b--*', label='MMSE')
+
+    ax2.set_xlabel('SNR (dB)')
+    ax2.set_ylabel('BER')
+    ax2.grid(True, which="both", ls="-", alpha=0.5)
+    ax2.legend()
+    ax2.set_title('Figure 5b: BER vs SNR')
     
-    save_path = os.path.join(RESULT_DIR, 'Figure_5.png')
+    plt.tight_layout()
+    
+    save_path = os.path.join(RESULT_DIR, 'Figure_5_DDTDG.png')
     plt.savefig(save_path)
     print(f"Figure 5 saved to {save_path}")
     plt.close()
@@ -82,10 +99,10 @@ def plot_fig11():
 if __name__ == "__main__":
     
     # Run Fig 5
-    plot_fig5()
+    # plot_fig5()
     
     # Run Fig 6
     # plot_fig6()
     
-    # Run Fig 11 (目前啟用)
-    # plot_fig11()
+    # Run Fig 11
+    plot_fig11()
