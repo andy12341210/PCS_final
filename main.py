@@ -99,10 +99,10 @@ def plot_fig11():
 if __name__ == "__main__":
     
     # Run Fig 5
-    # plot_fig5()
+    plot_fig5()
     
     # Run Fig 6
-    # plot_fig6()
+    plot_fig6()
     
     # Run Fig 11
     plot_fig11()
