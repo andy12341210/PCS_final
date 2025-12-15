@@ -23,16 +23,21 @@ def real_torch_to_complex(data_real):
 class ChannelNet(nn.Module):
     def __init__(self, input_dim, output_dim):
         super(ChannelNet, self).__init__()
-        # Layers: 4 -> 8 -> 4 -> Output
+        # 修改 1: 加寬隱藏層 (例如 32)，並移除瓶頸
+        # 修改 2: 使用 Tanh 激活函數，對模擬平滑通道響應效果通常比 ReLU 好
         self.net = nn.Sequential(
-            nn.Linear(input_dim, 4),
-            nn.ReLU(),
-            nn.Linear(4, 8),
-            nn.ReLU(),
-            nn.Linear(8, 4),
-            nn.ReLU(),
-            nn.Linear(4, output_dim)
+            nn.Linear(input_dim, 32),
+            nn.Tanh(),
+            nn.Linear(32, 16),
+            nn.Tanh(),
+            nn.Linear(16, output_dim)
         )
+        
+        # 初始化權重 (Xavier Initialization 對 Tanh 較好)
+        for m in self.net:
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                nn.init.zeros_(m.bias)
 
     def forward(self, x):
         return self.net(x)

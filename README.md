@@ -1,3 +1,5 @@
+----
+
 # OFDM Channel Estimation Simulation (LML / MMSE / DNN / ELM)
 
 本專案實作了一個 OFDM 系統模擬環境，旨在評估與比較不同的通道估測（Channel Estimation）演算法。專案主要聚焦於重現特定學術論文中的實驗結果（如 Figure 5, 6, 11），比較了傳統統計方法（LS, MMSE）與機器學習方法（Proposed LML, ELM, DNN）在不同信噪比（SNR）與非線性失真環境下的效能。
@@ -12,6 +14,8 @@
       * **LS (Least Square)**：基於導頻（Pilot）的線性插值估測。
       * **MMSE (Minimum Mean Square Error)**：利用通道相關性矩陣的統計估測器。
       * **LML (Proposed Method)**：基於 PATDG (Pilot-Aided Training Data Generation) 的線性機器學習估測器。
+        * **PATDG (Pilot-Aided)**：僅利用導頻數據進行訓練。
+        * **DDTDG (Decision-Directed)**：**[New]** 利用解調後的判決資料 (Decision) 進行在線自我更新。
       * **ELM (Extreme Learning Machine)**：極限學習機估測器。
       * **DNN (Deep Neural Network)**：基於 PyTorch 的深度神經網路估測器。
   * **效能評估指標**：
