@@ -11,6 +11,145 @@ from alg.Neural_estimators import ChannelNet, ELM_Estimator, complex_to_real_tor
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+
+def run_simulation_fig5():
+    # 初始化物件
+    ofdm = OFDMSystem()
+    mmse_est = MMSE(ofdm)
+    lml_est = LMLestimator(ofdm)
+
+    snr_db_range = np.arange(-10, 20, 4)
+    num_monte_carlo = 1000
+
+    # 準備儲存結果的字典
+    nmse_results = {'ls': [], 'mmse': [], 'proposed': [], 'ddtdg': []}
+    ber_results = {'ls': [], 'mmse': [], 'proposed': [], 'ddtdg': []}
+
+    print(f"Starting Figure 5 Simulation...")
+
+    for snr_db in snr_db_range:
+        snr_lin = 10**(snr_db/10)
+        
+        # 累積誤差變數
+        loss_nmse = {'ls': 0, 'mmse': 0, 'proposed': 0, 'ddtdg': 0}
+        loss_ber = {'ls': 0, 'mmse': 0, 'proposed': 0, 'ddtdg': 0}
+        
+        # 記錄錯誤數 (Debug)
+        debug_errors = 0
+
+        mmse_est.calculate_weights(snr_lin)
+
+        for mc in range(num_monte_carlo):
+            H_true = ofdm.generate_channel()
+
+            # ==========================================
+            # Phase 1: Training (PATDG - Only Pilots)
+            # ==========================================
+            x_train, _ = ofdm.qpsk_modulation(ofdm.K_active)
+            y_train_clean = H_true * x_train
+            y_train_rx, _ = ofdm.add_noise(y_train_clean, snr_db)
+            h_ls_train = y_train_rx / x_train
+            
+            lml_est.train(h_ls_train)
+
+            # ==========================================
+            # Phase 2: Testing Phase
+            # ==========================================
+            x_payload, x_ints_true = ofdm.qpsk_modulation(ofdm.K_active)
+            y_payload_clean = H_true * x_payload
+            
+            # [重要] 確保雜訊是真的加上去了
+            y_payload_rx, _ = ofdm.add_noise(y_payload_clean, snr_db)
+
+            # 導頻 LS 估測 (Input for Estimators)
+            noise_power_est = 1.0 / snr_lin # Theoretical Noise Power for MMSE
+            
+            # 手動添加導頻處的雜訊 (確保與 Payload 雜訊一致性)
+            # 這裡我們直接從 y_payload_rx 取樣，而不是重新生成雜訊，這樣更物理真實
+            # 假設 x_payload 在導頻位置就是 x_payload[pilot_indices]
+            # 這樣 h_ls_pilots 就會包含真實的 channel noise
+            h_ls_pilots = y_payload_rx[ofdm.pilot_indices] / x_payload[ofdm.pilot_indices]
+
+            # Ground Truth
+            h_true_data = H_true[ofdm.data_indices]
+            y_data_rx = y_payload_rx[ofdm.data_indices]
+            x_ints_data_true = x_ints_true[ofdm.data_indices]
+
+            # --- 評估函式 ---
+            def evaluate_method(h_est_data, name):
+                # 1. NMSE
+                loss_nmse[name] += ofdm.calc_nmse(h_true_data, h_est_data)
+                
+                # 2. Equalization & BER
+                h_est_safe = h_est_data.copy()
+                # 防止除以極小值 (但不要蓋過錯誤)
+                h_est_safe[np.abs(h_est_safe) < 1e-10] = 1e-10
+                
+                x_hat = y_data_rx / h_est_safe
+                dec_ints = ofdm.demodulate_qpsk(x_hat)
+                
+                errs = ofdm.calculate_ber(x_ints_data_true, dec_ints)
+                loss_ber[name] += errs
+                return dec_ints
+
+            # [A] LS
+            h_ls_data = ofdm.ls_interpolation(h_ls_pilots)
+            evaluate_method(h_ls_data, 'ls')
+
+            # [B] MMSE
+            h_mmse_data = mmse_est.estimate(h_ls_pilots)
+            evaluate_method(h_mmse_data, 'mmse')
+
+            # [C] Proposed (PATDG)
+            h_prop_data = lml_est.estimate(h_ls_pilots)
+            dec_ints_prop = evaluate_method(h_prop_data, 'proposed')
+
+            # Debug: 計算第一次 MC 的 Symbol Error
+            if mc == 0:
+                diff = np.sum(dec_ints_prop != x_ints_data_true)
+                debug_errors = diff
+
+            # ==========================================
+            # [D] DDTDG (Honest Implementation)
+            # ==========================================
+            # 1. 重構訊號 (Reconstruct using Decisions)
+            s_map = np.array([1+1j, -1+1j, -1-1j, 1-1j]) / np.sqrt(2)
+            x_rec = np.zeros(ofdm.K_active, dtype=complex)
+            
+            # 導頻位置用已知的 (Perfect)
+            x_rec[ofdm.pilot_indices] = x_payload[ofdm.pilot_indices]
+            
+            # 資料位置用判決的 (Dirty) -> 如果 SNR 低，這裡會有很多錯
+            x_rec[ofdm.data_indices] = s_map[dec_ints_prop] 
+
+            # 2. 計算 Dirty LS (Full Band)
+            # 為了避免除以 0，找出 x_rec 為 0 的地方 (理論上 QPSK 不會是 0，除非 index 沒填到)
+            # 這裡補上非 Data 非 Pilot 的空位
+            mask_valid = (x_rec != 0)
+            
+            h_ls_payload = np.zeros_like(y_payload_rx)
+            h_ls_payload[mask_valid] = y_payload_rx[mask_valid] / x_rec[mask_valid]
+
+            # 3. 更新權重 (Forgetting Factor = 0)
+            # 強迫 estimator 使用這個充滿誤差的 h_ls_payload 進行訓練
+            W_ddtdg = lml_est.update_ddtdg(h_ls_payload, forgetting_factor=0.0)
+
+            # 4. 重新估測
+            h_ddtdg_data = lml_est.estimate_with_W(h_ls_pilots, W_ddtdg)
+            evaluate_method(h_ddtdg_data, 'ddtdg')
+
+        # 平均
+        for method in ['ls', 'mmse', 'proposed', 'ddtdg']:
+            nmse_results[method].append(loss_nmse[method] / num_monte_carlo)
+            ber_results[method].append(loss_ber[method] / num_monte_carlo)
+
+        print(f"  SNR {snr_db}dB | "
+              f"PATDG NMSE: {nmse_results['proposed'][-1]:.4f} | "
+              f"DDTDG NMSE: {nmse_results['ddtdg'][-1]:.4f} | "
+              f"Symbol Errors (MC0): {debug_errors}")
+
+    return snr_db_range, nmse_results, ber_results
+
 def run_simulation_fig6():
     # 初始化
     sys = OFDMSystem()
@@ -87,6 +226,139 @@ def run_simulation_fig6():
             res_mmse[s_idx, d_idx] = loss_mmse / num_monte_carlo
             
     return dataset_sizes, res_proposed, res_accurate, res_mmse, snr_db_list
+
+def run_simulation_fig8_9():
+    """
+    Fig 8 & 9 Combined: 
+    Scenario 2: 非完美同步 (STO/CFO) 下的 NMSE 與 BER 比較
+    
+    [修改] 橫軸改為 Eb/N0
+    轉換公式 (QPSK): SNR(dB) = Eb/N0(dB) + 10*log10(2)
+    """
+    print("=== Running Figure 8 & 9 Simulation (STO/CFO Scenario) with Eb/N0 ===")
+    
+    # --- 模擬參數 ---
+    # 橫軸改為 Eb/N0
+    ebn0_db_list = np.arange(0, 16, 3) # 0 to 30 dB (Eb/N0)
+    
+    num_monte_carlo = 1000
+    sto_val = 3       # STO samples
+    cfo_val = 0.0    # Normalized CFO
+    
+    # --- 初始化系統 ---
+    sys = OFDMSystem()
+    sys.Df = 6
+    sys.S = 5
+    # 重算 Index
+    sys.pilot_indices = np.arange(0, sys.K_active, sys.Df)
+    sys.num_groups = len(sys.pilot_indices) - 1
+    sys.data_indices = np.setdiff1d(np.arange(sys.pilot_indices[-1]+1), sys.pilot_indices)
+    sys.valid_range = sys.pilot_indices[-1] + 1
+    
+    # --- 初始化估測器 ---
+    mmse_est = MMSE(sys)
+    lml_est = LMLestimator(sys)
+    
+    # --- 結果容器 ---
+    results_nmse = {'ls': [], 'mmse': [], 'lml': []}
+    results_ber  = {'ls': [], 'mmse': [], 'lml': []}
+    
+    # --- Eb/N0 Loop ---
+    for ebn0_db in ebn0_db_list:
+        # [關鍵修改] 將 Eb/N0 轉換為 SNR (dB)
+        # QPSK: 2 bits/symbol => SNR = Eb/N0 + 3.01 dB
+        snr_db = ebn0_db + 10 * np.log10(2)
+        snr_lin = 10**(snr_db/10)
+        
+        # 累加器
+        t_nmse_ls, t_nmse_mmse, t_nmse_lml = 0.0, 0.0, 0.0
+        t_ber_ls, t_ber_mmse, t_ber_lml = 0.0, 0.0, 0.0
+        
+        # 1. 計算 MMSE 權重 (Standard MMSE, Mismatch under STO)
+        mmse_est.calculate_weights(snr_lin)
+        W_mmse = mmse_est.W_mmse
+        
+        # 2. LML Online Training (使用換算後的 snr_db 生成噪聲)
+        train_size = 200
+        X_train_list, Y_train_list = [], []
+        
+        for _ in range(train_size):
+            H_tr = sys.generate_channel()
+            H_tr_eff = sys.add_sto_cfo(H_tr, sto_val, cfo_val)
+            
+            x_tr, _ = sys.qpsk_modulation(sys.K_active)
+            y_tr_clean = H_tr_eff * x_tr
+            # 注意：這裡傳入的是 snr_db
+            y_tr, _ = sys.add_noise(y_tr_clean, snr_db)
+            
+            h_ls_tr = y_tr / x_tr
+            
+            dx, dy = lml_est._generate_window_data(h_ls_tr)
+            if dx.shape[1] > 0:
+                X_train_list.append(dx)
+                Y_train_list.append(dy)
+        
+        if len(X_train_list) > 0:
+            X_train = np.hstack(X_train_list)
+            Y_train = np.hstack(Y_train_list)
+            lml_est.train_with_data(X_train, Y_train)
+            
+        # --- Monte Carlo Loop ---
+        for mc in range(num_monte_carlo):
+            H_true = sys.generate_channel()
+            H_eff = sys.add_sto_cfo(H_true, sto_val, cfo_val)
+            
+            x_payload, x_bits = sys.qpsk_modulation(sys.K_active)
+            y_clean = H_eff * x_payload
+            y_rx, _ = sys.add_noise(y_clean, snr_db)
+            
+            # --- LS ---
+            h_ls_pilots = y_rx[sys.pilot_indices] / x_payload[sys.pilot_indices]
+            h_ls_data = sys.ls_interpolation(h_ls_pilots)
+            
+            # --- MMSE ---
+            h_mmse_full = np.zeros(sys.K_active, dtype=complex)
+            h_mmse_full[sys.pilot_indices] = h_ls_pilots
+            for i in range(sys.num_groups):
+                h_p_local = h_ls_pilots[i : i+2]
+                if W_mmse is not None:
+                    h_d_local = W_mmse @ h_p_local
+                else:
+                    h_d_local = np.zeros(sys.S, dtype=complex)
+                p_idx_start = sys.pilot_indices[i]
+                p_idx_end = sys.pilot_indices[i+1]
+                h_mmse_full[p_idx_start+1 : p_idx_end] = h_d_local
+            h_mmse_data = h_mmse_full[sys.data_indices]
+            
+            # --- LML ---
+            h_lml_data = lml_est.estimate(h_ls_pilots)
+            
+            # --- Error Calculation ---
+            h_true_data = H_eff[sys.data_indices]
+            
+            # NMSE
+            t_nmse_ls += np.linalg.norm(h_ls_data - h_true_data)**2 / np.linalg.norm(h_true_data)**2
+            t_nmse_mmse += np.linalg.norm(h_mmse_data - h_true_data)**2 / np.linalg.norm(h_true_data)**2
+            t_nmse_lml += np.linalg.norm(h_lml_data - h_true_data)**2 / np.linalg.norm(h_true_data)**2
+            
+            # BER
+            x_bits_data = x_bits[sys.data_indices]
+            t_ber_ls += sys.calculate_ber(x_bits_data, sys.demodulate_qpsk(y_rx[sys.data_indices] / h_ls_data))
+            t_ber_mmse += sys.calculate_ber(x_bits_data, sys.demodulate_qpsk(y_rx[sys.data_indices] / h_mmse_data))
+            t_ber_lml += sys.calculate_ber(x_bits_data, sys.demodulate_qpsk(y_rx[sys.data_indices] / h_lml_data))
+
+        # Average
+        results_nmse['ls'].append(t_nmse_ls / num_monte_carlo)
+        results_nmse['mmse'].append(t_nmse_mmse / num_monte_carlo)
+        results_nmse['lml'].append(t_nmse_lml / num_monte_carlo)
+        
+        results_ber['ls'].append(t_ber_ls / num_monte_carlo)
+        results_ber['mmse'].append(t_ber_mmse / num_monte_carlo)
+        results_ber['lml'].append(t_ber_lml / num_monte_carlo)
+        
+        print(f"  Eb/N0 {ebn0_db}dB (SNR {snr_db:.2f}dB) | NMSE(LML): {results_nmse['lml'][-1]:.4f} | BER(LML): {results_ber['lml'][-1]:.4f}")
+
+    return ebn0_db_list, results_nmse, results_ber
 
 def run_simulation_fig11():
     sys = OFDMSystem()
@@ -256,274 +528,3 @@ def run_simulation_fig11():
         ber_dnn.append(err_dnn / num_monte_carlo)
 
     return ebn0_range, ber_proposed, ber_dnn, ber_elm, ber_mmse
-
-def run_simulation_fig5():
-    # 初始化物件
-    ofdm = OFDMSystem()
-    mmse_est = MMSE(ofdm)
-    lml_est = LMLestimator(ofdm)
-
-    snr_db_range = np.arange(-10, 20, 4)
-    num_monte_carlo = 1000
-
-    # 準備儲存結果的字典
-    nmse_results = {'ls': [], 'mmse': [], 'proposed': [], 'ddtdg': []}
-    ber_results = {'ls': [], 'mmse': [], 'proposed': [], 'ddtdg': []}
-
-    print(f"Starting Figure 5 Simulation...")
-
-    for snr_db in snr_db_range:
-        snr_lin = 10**(snr_db/10)
-        
-        # 累積誤差變數
-        loss_nmse = {'ls': 0, 'mmse': 0, 'proposed': 0, 'ddtdg': 0}
-        loss_ber = {'ls': 0, 'mmse': 0, 'proposed': 0, 'ddtdg': 0}
-        
-        # 記錄錯誤數 (Debug)
-        debug_errors = 0
-
-        mmse_est.calculate_weights(snr_lin)
-
-        for mc in range(num_monte_carlo):
-            H_true = ofdm.generate_channel()
-
-            # ==========================================
-            # Phase 1: Training (PATDG - Only Pilots)
-            # ==========================================
-            x_train, _ = ofdm.qpsk_modulation(ofdm.K_active)
-            y_train_clean = H_true * x_train
-            y_train_rx, _ = ofdm.add_noise(y_train_clean, snr_db)
-            h_ls_train = y_train_rx / x_train
-            
-            lml_est.train(h_ls_train)
-
-            # ==========================================
-            # Phase 2: Testing Phase
-            # ==========================================
-            x_payload, x_ints_true = ofdm.qpsk_modulation(ofdm.K_active)
-            y_payload_clean = H_true * x_payload
-            
-            # [重要] 確保雜訊是真的加上去了
-            y_payload_rx, _ = ofdm.add_noise(y_payload_clean, snr_db)
-
-            # 導頻 LS 估測 (Input for Estimators)
-            noise_power_est = 1.0 / snr_lin # Theoretical Noise Power for MMSE
-            
-            # 手動添加導頻處的雜訊 (確保與 Payload 雜訊一致性)
-            # 這裡我們直接從 y_payload_rx 取樣，而不是重新生成雜訊，這樣更物理真實
-            # 假設 x_payload 在導頻位置就是 x_payload[pilot_indices]
-            # 這樣 h_ls_pilots 就會包含真實的 channel noise
-            h_ls_pilots = y_payload_rx[ofdm.pilot_indices] / x_payload[ofdm.pilot_indices]
-
-            # Ground Truth
-            h_true_data = H_true[ofdm.data_indices]
-            y_data_rx = y_payload_rx[ofdm.data_indices]
-            x_ints_data_true = x_ints_true[ofdm.data_indices]
-
-            # --- 評估函式 ---
-            def evaluate_method(h_est_data, name):
-                # 1. NMSE
-                loss_nmse[name] += ofdm.calc_nmse(h_true_data, h_est_data)
-                
-                # 2. Equalization & BER
-                h_est_safe = h_est_data.copy()
-                # 防止除以極小值 (但不要蓋過錯誤)
-                h_est_safe[np.abs(h_est_safe) < 1e-10] = 1e-10
-                
-                x_hat = y_data_rx / h_est_safe
-                dec_ints = ofdm.demodulate_qpsk(x_hat)
-                
-                errs = ofdm.calculate_ber(x_ints_data_true, dec_ints)
-                loss_ber[name] += errs
-                return dec_ints
-
-            # [A] LS
-            h_ls_data = ofdm.ls_interpolation(h_ls_pilots)
-            evaluate_method(h_ls_data, 'ls')
-
-            # [B] MMSE
-            h_mmse_data = mmse_est.estimate(h_ls_pilots)
-            evaluate_method(h_mmse_data, 'mmse')
-
-            # [C] Proposed (PATDG)
-            h_prop_data = lml_est.estimate(h_ls_pilots)
-            dec_ints_prop = evaluate_method(h_prop_data, 'proposed')
-
-            # Debug: 計算第一次 MC 的 Symbol Error
-            if mc == 0:
-                diff = np.sum(dec_ints_prop != x_ints_data_true)
-                debug_errors = diff
-
-            # ==========================================
-            # [D] DDTDG (Honest Implementation)
-            # ==========================================
-            # 1. 重構訊號 (Reconstruct using Decisions)
-            s_map = np.array([1+1j, -1+1j, -1-1j, 1-1j]) / np.sqrt(2)
-            x_rec = np.zeros(ofdm.K_active, dtype=complex)
-            
-            # 導頻位置用已知的 (Perfect)
-            x_rec[ofdm.pilot_indices] = x_payload[ofdm.pilot_indices]
-            
-            # 資料位置用判決的 (Dirty) -> 如果 SNR 低，這裡會有很多錯
-            x_rec[ofdm.data_indices] = s_map[dec_ints_prop] 
-
-            # 2. 計算 Dirty LS (Full Band)
-            # 為了避免除以 0，找出 x_rec 為 0 的地方 (理論上 QPSK 不會是 0，除非 index 沒填到)
-            # 這裡補上非 Data 非 Pilot 的空位
-            mask_valid = (x_rec != 0)
-            
-            h_ls_payload = np.zeros_like(y_payload_rx)
-            h_ls_payload[mask_valid] = y_payload_rx[mask_valid] / x_rec[mask_valid]
-
-            # 3. 更新權重 (Forgetting Factor = 0)
-            # 強迫 estimator 使用這個充滿誤差的 h_ls_payload 進行訓練
-            W_ddtdg = lml_est.update_ddtdg(h_ls_payload, forgetting_factor=0.0)
-
-            # 4. 重新估測
-            h_ddtdg_data = lml_est.estimate_with_W(h_ls_pilots, W_ddtdg)
-            evaluate_method(h_ddtdg_data, 'ddtdg')
-
-        # 平均
-        for method in ['ls', 'mmse', 'proposed', 'ddtdg']:
-            nmse_results[method].append(loss_nmse[method] / num_monte_carlo)
-            ber_results[method].append(loss_ber[method] / num_monte_carlo)
-
-        print(f"  SNR {snr_db}dB | "
-              f"PATDG NMSE: {nmse_results['proposed'][-1]:.4f} | "
-              f"DDTDG NMSE: {nmse_results['ddtdg'][-1]:.4f} | "
-              f"Symbol Errors (MC0): {debug_errors}")
-
-    return snr_db_range, nmse_results, ber_results
-
-def run_simulation_fig8_9():
-    """
-    Fig 8 & 9 Combined: 
-    Scenario 2: 非完美同步 (STO/CFO) 下的 NMSE 與 BER 比較
-    
-    [修改] 橫軸改為 Eb/N0
-    轉換公式 (QPSK): SNR(dB) = Eb/N0(dB) + 10*log10(2)
-    """
-    print("=== Running Figure 8 & 9 Simulation (STO/CFO Scenario) with Eb/N0 ===")
-    
-    # --- 模擬參數 ---
-    # 橫軸改為 Eb/N0
-    ebn0_db_list = np.arange(0, 16, 3) # 0 to 30 dB (Eb/N0)
-    
-    num_monte_carlo = 1000
-    sto_val = 3       # STO samples
-    cfo_val = 0.0    # Normalized CFO
-    
-    # --- 初始化系統 ---
-    sys = OFDMSystem()
-    sys.Df = 6
-    sys.S = 5
-    # 重算 Index
-    sys.pilot_indices = np.arange(0, sys.K_active, sys.Df)
-    sys.num_groups = len(sys.pilot_indices) - 1
-    sys.data_indices = np.setdiff1d(np.arange(sys.pilot_indices[-1]+1), sys.pilot_indices)
-    sys.valid_range = sys.pilot_indices[-1] + 1
-    
-    # --- 初始化估測器 ---
-    mmse_est = MMSE(sys)
-    lml_est = LMLestimator(sys)
-    
-    # --- 結果容器 ---
-    results_nmse = {'ls': [], 'mmse': [], 'lml': []}
-    results_ber  = {'ls': [], 'mmse': [], 'lml': []}
-    
-    # --- Eb/N0 Loop ---
-    for ebn0_db in ebn0_db_list:
-        # [關鍵修改] 將 Eb/N0 轉換為 SNR (dB)
-        # QPSK: 2 bits/symbol => SNR = Eb/N0 + 3.01 dB
-        snr_db = ebn0_db + 10 * np.log10(2)
-        snr_lin = 10**(snr_db/10)
-        
-        # 累加器
-        t_nmse_ls, t_nmse_mmse, t_nmse_lml = 0.0, 0.0, 0.0
-        t_ber_ls, t_ber_mmse, t_ber_lml = 0.0, 0.0, 0.0
-        
-        # 1. 計算 MMSE 權重 (Standard MMSE, Mismatch under STO)
-        mmse_est.calculate_weights(snr_lin)
-        W_mmse = mmse_est.W_mmse
-        
-        # 2. LML Online Training (使用換算後的 snr_db 生成噪聲)
-        train_size = 200
-        X_train_list, Y_train_list = [], []
-        
-        for _ in range(train_size):
-            H_tr = sys.generate_channel()
-            H_tr_eff = sys.add_sto_cfo(H_tr, sto_val, cfo_val)
-            
-            x_tr, _ = sys.qpsk_modulation(sys.K_active)
-            y_tr_clean = H_tr_eff * x_tr
-            # 注意：這裡傳入的是 snr_db
-            y_tr, _ = sys.add_noise(y_tr_clean, snr_db)
-            
-            h_ls_tr = y_tr / x_tr
-            
-            dx, dy = lml_est._generate_window_data(h_ls_tr)
-            if dx.shape[1] > 0:
-                X_train_list.append(dx)
-                Y_train_list.append(dy)
-        
-        if len(X_train_list) > 0:
-            X_train = np.hstack(X_train_list)
-            Y_train = np.hstack(Y_train_list)
-            lml_est.train_with_data(X_train, Y_train)
-            
-        # --- Monte Carlo Loop ---
-        for mc in range(num_monte_carlo):
-            H_true = sys.generate_channel()
-            H_eff = sys.add_sto_cfo(H_true, sto_val, cfo_val)
-            
-            x_payload, x_bits = sys.qpsk_modulation(sys.K_active)
-            y_clean = H_eff * x_payload
-            y_rx, _ = sys.add_noise(y_clean, snr_db)
-            
-            # --- LS ---
-            h_ls_pilots = y_rx[sys.pilot_indices] / x_payload[sys.pilot_indices]
-            h_ls_data = sys.ls_interpolation(h_ls_pilots)
-            
-            # --- MMSE ---
-            h_mmse_full = np.zeros(sys.K_active, dtype=complex)
-            h_mmse_full[sys.pilot_indices] = h_ls_pilots
-            for i in range(sys.num_groups):
-                h_p_local = h_ls_pilots[i : i+2]
-                if W_mmse is not None:
-                    h_d_local = W_mmse @ h_p_local
-                else:
-                    h_d_local = np.zeros(sys.S, dtype=complex)
-                p_idx_start = sys.pilot_indices[i]
-                p_idx_end = sys.pilot_indices[i+1]
-                h_mmse_full[p_idx_start+1 : p_idx_end] = h_d_local
-            h_mmse_data = h_mmse_full[sys.data_indices]
-            
-            # --- LML ---
-            h_lml_data = lml_est.estimate(h_ls_pilots)
-            
-            # --- Error Calculation ---
-            h_true_data = H_eff[sys.data_indices]
-            
-            # NMSE
-            t_nmse_ls += np.linalg.norm(h_ls_data - h_true_data)**2 / np.linalg.norm(h_true_data)**2
-            t_nmse_mmse += np.linalg.norm(h_mmse_data - h_true_data)**2 / np.linalg.norm(h_true_data)**2
-            t_nmse_lml += np.linalg.norm(h_lml_data - h_true_data)**2 / np.linalg.norm(h_true_data)**2
-            
-            # BER
-            x_bits_data = x_bits[sys.data_indices]
-            t_ber_ls += sys.calculate_ber(x_bits_data, sys.demodulate_qpsk(y_rx[sys.data_indices] / h_ls_data))
-            t_ber_mmse += sys.calculate_ber(x_bits_data, sys.demodulate_qpsk(y_rx[sys.data_indices] / h_mmse_data))
-            t_ber_lml += sys.calculate_ber(x_bits_data, sys.demodulate_qpsk(y_rx[sys.data_indices] / h_lml_data))
-
-        # Average
-        results_nmse['ls'].append(t_nmse_ls / num_monte_carlo)
-        results_nmse['mmse'].append(t_nmse_mmse / num_monte_carlo)
-        results_nmse['lml'].append(t_nmse_lml / num_monte_carlo)
-        
-        results_ber['ls'].append(t_ber_ls / num_monte_carlo)
-        results_ber['mmse'].append(t_ber_mmse / num_monte_carlo)
-        results_ber['lml'].append(t_ber_lml / num_monte_carlo)
-        
-        print(f"  Eb/N0 {ebn0_db}dB (SNR {snr_db:.2f}dB) | NMSE(LML): {results_nmse['lml'][-1]:.4f} | BER(LML): {results_ber['lml'][-1]:.4f}")
-
-    return ebn0_db_list, results_nmse, results_ber
