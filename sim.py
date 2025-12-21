@@ -239,11 +239,11 @@ def run_simulation_fig8_9():
     
     # --- 模擬參數 ---
     # 橫軸改為 Eb/N0
-    ebn0_db_list = np.arange(0, 16, 3) # 0 to 30 dB (Eb/N0)
+    ebn0_db_list = np.arange(0, 19, 3) # 0 to 30 dB (Eb/N0)
     
     num_monte_carlo = 1000
-    sto_val = 3       # STO samples
-    cfo_val = 0.0    # Normalized CFO
+    sto_val = 0       # STO samples
+    cfo_val = 0.05    # Normalized CFO
     
     # --- 初始化系統 ---
     sys = OFDMSystem()
