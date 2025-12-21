@@ -394,3 +394,136 @@ def run_simulation_fig5():
               f"Symbol Errors (MC0): {debug_errors}")
 
     return snr_db_range, nmse_results, ber_results
+
+def run_simulation_fig8_9():
+    """
+    Fig 8 & 9 Combined: 
+    Scenario 2: 非完美同步 (STO/CFO) 下的 NMSE 與 BER 比較
+    
+    [修改] 橫軸改為 Eb/N0
+    轉換公式 (QPSK): SNR(dB) = Eb/N0(dB) + 10*log10(2)
+    """
+    print("=== Running Figure 8 & 9 Simulation (STO/CFO Scenario) with Eb/N0 ===")
+    
+    # --- 模擬參數 ---
+    # 橫軸改為 Eb/N0
+    ebn0_db_list = np.arange(0, 16, 3) # 0 to 30 dB (Eb/N0)
+    
+    num_monte_carlo = 1000
+    sto_val = 3       # STO samples
+    cfo_val = 0.0    # Normalized CFO
+    
+    # --- 初始化系統 ---
+    sys = OFDMSystem()
+    sys.Df = 6
+    sys.S = 5
+    # 重算 Index
+    sys.pilot_indices = np.arange(0, sys.K_active, sys.Df)
+    sys.num_groups = len(sys.pilot_indices) - 1
+    sys.data_indices = np.setdiff1d(np.arange(sys.pilot_indices[-1]+1), sys.pilot_indices)
+    sys.valid_range = sys.pilot_indices[-1] + 1
+    
+    # --- 初始化估測器 ---
+    mmse_est = MMSE(sys)
+    lml_est = LMLestimator(sys)
+    
+    # --- 結果容器 ---
+    results_nmse = {'ls': [], 'mmse': [], 'lml': []}
+    results_ber  = {'ls': [], 'mmse': [], 'lml': []}
+    
+    # --- Eb/N0 Loop ---
+    for ebn0_db in ebn0_db_list:
+        # [關鍵修改] 將 Eb/N0 轉換為 SNR (dB)
+        # QPSK: 2 bits/symbol => SNR = Eb/N0 + 3.01 dB
+        snr_db = ebn0_db + 10 * np.log10(2)
+        snr_lin = 10**(snr_db/10)
+        
+        # 累加器
+        t_nmse_ls, t_nmse_mmse, t_nmse_lml = 0.0, 0.0, 0.0
+        t_ber_ls, t_ber_mmse, t_ber_lml = 0.0, 0.0, 0.0
+        
+        # 1. 計算 MMSE 權重 (Standard MMSE, Mismatch under STO)
+        mmse_est.calculate_weights(snr_lin)
+        W_mmse = mmse_est.W_mmse
+        
+        # 2. LML Online Training (使用換算後的 snr_db 生成噪聲)
+        train_size = 200
+        X_train_list, Y_train_list = [], []
+        
+        for _ in range(train_size):
+            H_tr = sys.generate_channel()
+            H_tr_eff = sys.add_sto_cfo(H_tr, sto_val, cfo_val)
+            
+            x_tr, _ = sys.qpsk_modulation(sys.K_active)
+            y_tr_clean = H_tr_eff * x_tr
+            # 注意：這裡傳入的是 snr_db
+            y_tr, _ = sys.add_noise(y_tr_clean, snr_db)
+            
+            h_ls_tr = y_tr / x_tr
+            
+            dx, dy = lml_est._generate_window_data(h_ls_tr)
+            if dx.shape[1] > 0:
+                X_train_list.append(dx)
+                Y_train_list.append(dy)
+        
+        if len(X_train_list) > 0:
+            X_train = np.hstack(X_train_list)
+            Y_train = np.hstack(Y_train_list)
+            lml_est.train_with_data(X_train, Y_train)
+            
+        # --- Monte Carlo Loop ---
+        for mc in range(num_monte_carlo):
+            H_true = sys.generate_channel()
+            H_eff = sys.add_sto_cfo(H_true, sto_val, cfo_val)
+            
+            x_payload, x_bits = sys.qpsk_modulation(sys.K_active)
+            y_clean = H_eff * x_payload
+            y_rx, _ = sys.add_noise(y_clean, snr_db)
+            
+            # --- LS ---
+            h_ls_pilots = y_rx[sys.pilot_indices] / x_payload[sys.pilot_indices]
+            h_ls_data = sys.ls_interpolation(h_ls_pilots)
+            
+            # --- MMSE ---
+            h_mmse_full = np.zeros(sys.K_active, dtype=complex)
+            h_mmse_full[sys.pilot_indices] = h_ls_pilots
+            for i in range(sys.num_groups):
+                h_p_local = h_ls_pilots[i : i+2]
+                if W_mmse is not None:
+                    h_d_local = W_mmse @ h_p_local
+                else:
+                    h_d_local = np.zeros(sys.S, dtype=complex)
+                p_idx_start = sys.pilot_indices[i]
+                p_idx_end = sys.pilot_indices[i+1]
+                h_mmse_full[p_idx_start+1 : p_idx_end] = h_d_local
+            h_mmse_data = h_mmse_full[sys.data_indices]
+            
+            # --- LML ---
+            h_lml_data = lml_est.estimate(h_ls_pilots)
+            
+            # --- Error Calculation ---
+            h_true_data = H_eff[sys.data_indices]
+            
+            # NMSE
+            t_nmse_ls += np.linalg.norm(h_ls_data - h_true_data)**2 / np.linalg.norm(h_true_data)**2
+            t_nmse_mmse += np.linalg.norm(h_mmse_data - h_true_data)**2 / np.linalg.norm(h_true_data)**2
+            t_nmse_lml += np.linalg.norm(h_lml_data - h_true_data)**2 / np.linalg.norm(h_true_data)**2
+            
+            # BER
+            x_bits_data = x_bits[sys.data_indices]
+            t_ber_ls += sys.calculate_ber(x_bits_data, sys.demodulate_qpsk(y_rx[sys.data_indices] / h_ls_data))
+            t_ber_mmse += sys.calculate_ber(x_bits_data, sys.demodulate_qpsk(y_rx[sys.data_indices] / h_mmse_data))
+            t_ber_lml += sys.calculate_ber(x_bits_data, sys.demodulate_qpsk(y_rx[sys.data_indices] / h_lml_data))
+
+        # Average
+        results_nmse['ls'].append(t_nmse_ls / num_monte_carlo)
+        results_nmse['mmse'].append(t_nmse_mmse / num_monte_carlo)
+        results_nmse['lml'].append(t_nmse_lml / num_monte_carlo)
+        
+        results_ber['ls'].append(t_ber_ls / num_monte_carlo)
+        results_ber['mmse'].append(t_ber_mmse / num_monte_carlo)
+        results_ber['lml'].append(t_ber_lml / num_monte_carlo)
+        
+        print(f"  Eb/N0 {ebn0_db}dB (SNR {snr_db:.2f}dB) | NMSE(LML): {results_nmse['lml'][-1]:.4f} | BER(LML): {results_ber['lml'][-1]:.4f}")
+
+    return ebn0_db_list, results_nmse, results_ber

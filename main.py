@@ -2,6 +2,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import os
 from sim import run_simulation_fig6, run_simulation_fig11, run_simulation_fig5
+from sim import run_simulation_fig8_9
 
 # 設定儲存路徑
 RESULT_DIR = './result'
@@ -76,6 +77,42 @@ def plot_fig6():
     print(f"Figure 6 saved to {save_path}")
     plt.close()
 
+def plot_fig8_9():
+    from sim import run_simulation_fig8_9
+    
+    # 執行合併模擬
+    ebn0_list, res_nmse, res_ber = run_simulation_fig8_9()
+    
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+
+    # --- Plot 1: NMSE (Fig 8) ---
+    ax1.semilogy(ebn0_list, res_nmse['ls'], 'k-s', label='LS')
+    ax1.semilogy(ebn0_list, res_nmse['mmse'], 'b--*', label='Average MMSE')
+    ax1.semilogy(ebn0_list, res_nmse['lml'], 'r-o', label='Proposed LML')
+    
+    ax1.set_xlabel('Eb/N0 (dB)') # [修改] 標籤
+    ax1.set_ylabel('NMSE')
+    ax1.grid(True, which="both", ls="-", alpha=0.5)
+    ax1.legend()
+    ax1.set_title('Figure 8: NMSE vs Eb/N0 (STO/CFO)')
+
+    # --- Plot 2: BER (Fig 9) ---
+    ax2.semilogy(ebn0_list, res_ber['ls'], 'k-s', label='LS')
+    ax2.semilogy(ebn0_list, res_ber['mmse'], 'b--*', label='Average MMSE')
+    ax2.semilogy(ebn0_list, res_ber['lml'], 'r-o', label='Proposed LML')
+    
+    ax2.set_xlabel('Eb/N0 (dB)') # [修改] 標籤
+    ax2.set_ylabel('BER')
+    ax2.grid(True, which="both", ls="-", alpha=0.5)
+    ax2.legend()
+    ax2.set_title('Figure 9: BER vs Eb/N0 (STO/CFO)')
+
+    plt.tight_layout()
+    
+    save_path = os.path.join(RESULT_DIR, 'Figure_8_9_STO_CFO_EbN0.png')
+    plt.savefig(save_path)
+    print(f"Figure 8 & 9 saved to {save_path}")
+
 def plot_fig11():
     x, y_prop, y_dnn, y_elm, y_mmse = run_simulation_fig11()
 
@@ -96,13 +133,10 @@ def plot_fig11():
     print(f"Figure 11 saved to {save_path}")
     plt.close()
 
+
 if __name__ == "__main__":
     
-    # Run Fig 5
-    plot_fig5()
-    
-    # Run Fig 6
-    plot_fig6()
-    
-    # Run Fig 11
-    plot_fig11()
+    # plot_fig5()
+    plot_fig8_9()
+    # plot_fig6()
+    # plot_fig11()

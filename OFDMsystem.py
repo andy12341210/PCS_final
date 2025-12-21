@@ -2,12 +2,12 @@ import numpy as np
 from scipy.interpolate import interp1d
 
 class OFDMSystem:
-    def __init__(self):
+    def __init__(self, Df = 3):
         # 系統參數
         self.K_total = 512
         self.K_active = 410
         self.CP = 128
-        self.Df = 3
+        self.Df = Df
         self.M = 2
         self.S = self.Df - 1 # 2
         self.Fs = 20e6
@@ -54,6 +54,36 @@ class OFDMSystem:
         noise_power = sig_power / (10**(snr_db/10))
         noise = (np.random.randn(*signal.shape) + 1j*np.random.randn(*signal.shape)) / np.sqrt(2)
         return signal + np.sqrt(noise_power) * noise, noise_power
+
+    def add_sto_cfo(self, H_freq, sto_samples, cfo_normalized):
+        """
+        模擬 STO 和 CFO 對頻域通道的影響 (Scenario 2)
+        STO: 造成隨 Subcarrier index 變化的相位旋轉
+        CFO: 造成整體的相位旋轉 (Common Phase Error) + ICI (在此簡化為 CPE)
+        
+        Args:
+            H_freq: 原始頻域通道 (K_active,)
+            sto_samples: 時間偏移量 (單位: sample)
+            cfo_normalized: 正規化頻率偏移 (epsilon)
+        """
+        # 1. STO 效應: H[k] * exp(-j * 2pi * k * delta / N)
+        # 需注意 k 是 active subcarrier indices
+        # 我們假設 pilot_indices[0] 對應的物理頻率 index 與 DC 的相對關係
+        # 這裡簡化使用 0 to K_active 的相對 index
+        k_indices = np.arange(self.K_active)
+        
+        # 相位旋轉項
+        phase_sto = np.exp(-1j * 2 * np.pi * k_indices * sto_samples / self.K_total)
+        
+        # 2. CFO 效應 (CPE): 假設為一個固定的隨機相位或線性累積相位
+        # 在單個 OFDM Symbol 估測中，CFO 表現為一個 common phase rotation
+        # 這裡模擬一個隨機的初始相位偏移
+        phase_cfo = np.exp(1j * 2 * np.pi * cfo_normalized * np.random.rand())
+        
+        # 合成有效通道
+        H_impaired = H_freq * phase_sto * phase_cfo
+        
+        return H_impaired
 
     def calc_nmse(self, h_true, h_est):
         return np.mean(np.abs(h_true - h_est)**2) / np.mean(np.abs(h_true)**2)

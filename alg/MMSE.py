@@ -10,8 +10,8 @@ class MMSE:
 
     def calculate_weights(self, snr_lin):
         """計算 LMMSE 權重矩陣 W"""
-        pilot_pos = np.array([0, 3]) # Local group relative positions
-        data_pos = np.array([1, 2])
+        pilot_pos = np.array([0, self.sys.Df])
+        data_pos = np.arange(1, self.sys.Df)
 
         # Correlation function R(delta_k)
         def correlation(delta_k):
