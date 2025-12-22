@@ -41,7 +41,7 @@ def plot_fig5():
     
     plt.tight_layout()
     
-    save_path = os.path.join(RESULT_DIR, 'Figure_5_DDTDG.png')
+    save_path = os.path.join(RESULT_DIR, 'Figure_5.png')
     plt.savefig(save_path)
     print(f"Figure 5 saved to {save_path}")
     plt.close()
@@ -94,8 +94,9 @@ def plot_fig8_9():
     ax1.set_ylabel('NMSE')
     ax1.grid(True, which="both", ls="-", alpha=0.5)
     ax1.legend()
+    ax1.set_title('Figure 8: NMSE vs Eb/N0 (STO/CFO)')
     # ax1.set_title('Figure 8: NMSE vs Eb/N0 (STO)')
-    ax1.set_title('Figure 8: NMSE vs Eb/N0 (CFO)')
+    # ax1.set_title('Figure 8: NMSE vs Eb/N0 (CFO)')
 
     # --- Plot 2: BER (Fig 9) ---
     ax2.semilogy(ebn0_list, res_ber['ls'], 'k-s', label='LS')
@@ -106,12 +107,13 @@ def plot_fig8_9():
     ax2.set_ylabel('BER')
     ax2.grid(True, which="both", ls="-", alpha=0.5)
     ax2.legend()
+    ax2.set_title('Figure 9: BER vs Eb/N0 (STO/CFO)')
     # ax2.set_title('Figure 9: BER vs Eb/N0 (STO)')
-    ax2.set_title('Figure 9: BER vs Eb/N0 (CFO)')
+    # ax2.set_title('Figure 9: BER vs Eb/N0 (CFO)')
 
     plt.tight_layout()
     
-    save_path = os.path.join(RESULT_DIR, 'Figure_8_9_STO_CFO_EbN0.png')
+    save_path = os.path.join(RESULT_DIR, 'Figure_8_9.png')
     plt.savefig(save_path)
     print(f"Figure 8 & 9 saved to {save_path}")
 
@@ -138,7 +140,7 @@ def plot_fig11():
 
 if __name__ == "__main__":
     
-    # plot_fig5()
+    plot_fig5()
     plot_fig8_9()
-    # plot_fig6()
-    # plot_fig11()
+    plot_fig6()
+    plot_fig11()

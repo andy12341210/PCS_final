@@ -749,6 +749,6 @@ def vis_lml():
     print("="*80)
 
 if __name__ == "__main__":
-    # vis_DNN()
+    vis_DNN()
     # vis_elm()
-    vis_lml()
+    # vis_lml()
