@@ -227,7 +227,7 @@ def run_simulation_fig6():
             
     return dataset_sizes, res_proposed, res_accurate, res_mmse, snr_db_list
 
-def run_simulation_fig8_9():
+def run_simulation_fig8_9(sto = 0, cfo = 0):
     """
     Fig 8 & 9 Combined: 
     Scenario 2: 非完美同步 (STO/CFO) 下的 NMSE 與 BER 比較
@@ -242,8 +242,8 @@ def run_simulation_fig8_9():
     ebn0_db_list = np.arange(0, 19, 3) # 0 to 30 dB (Eb/N0)
     
     num_monte_carlo = 1000
-    sto_val = 0       # STO samples
-    cfo_val = 0.05    # Normalized CFO
+    sto_val = sto       # STO samples
+    cfo_val = cfo    # Normalized CFO
     
     # --- 初始化系統 ---
     sys = OFDMSystem()

@@ -77,11 +77,11 @@ def plot_fig6():
     print(f"Figure 6 saved to {save_path}")
     plt.close()
 
-def plot_fig8_9():
+def plot_fig8_9(sto, cfo):
     from sim import run_simulation_fig8_9
     
     # 執行合併模擬
-    ebn0_list, res_nmse, res_ber = run_simulation_fig8_9()
+    ebn0_list, res_nmse, res_ber = run_simulation_fig8_9(sto = sto, cfo = cfo)
     
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
 
@@ -141,6 +141,6 @@ def plot_fig11():
 if __name__ == "__main__":
     
     plot_fig5()
-    plot_fig8_9()
+    plot_fig8_9(sto = -3, cfo = 0.05)
     plot_fig6()
     plot_fig11()
