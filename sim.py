@@ -528,3 +528,227 @@ def run_simulation_fig11():
         ber_dnn.append(err_dnn / num_monte_carlo)
 
     return ebn0_range, ber_proposed, ber_dnn, ber_elm, ber_mmse
+
+def vis_DNN():
+    print("\n" + "="*60)
+    print("   Visualizing DNN I/O (Based on Fig 11 Configuration)")
+    print("="*60)
+
+    # ---------------------------------------------------------
+    # 1. 環境設置 (完全參照 run_simulation_fig11)
+    # ---------------------------------------------------------
+    # 初始化系統
+    sys = OFDMSystem()
+    
+    # 模擬 Fig 11 的數據生成 (這裡取一個固定的 SNR 來觀察)
+    snr_db = 20 
+    print(f"[Step 1] 數據生成 (Data Generation)")
+    print(f"    System: Pedestrian B, Df={sys.Df}, SNR={snr_db}dB")
+    
+    # 使用系統內建函式取得訓練數據 (X: Pilot位置的LS估測, Y: Data位置的LS估測)
+    # X_train_c shape: (Features, Samples)
+    X_train_c, Y_train_c, _ = sys.get_training_dataset(snr_db)
+    
+    # 只取前 3 筆樣本 (Samples) 來做視覺化，避免版面混亂
+    n_show = 1
+    X_sample_c = X_train_c[:, :n_show]
+    
+    print(f"    原始複數輸入 (Raw Complex Input)")
+    print(f"    Shape: {X_train_c.shape} -> 取前 {n_show} 筆: {X_sample_c.shape}")
+    print(f"    Content:\n{X_sample_c}")
+
+    # ---------------------------------------------------------
+    # 2. 數據預處理 (Fig 11 關鍵步驟: 標準化)
+    # ---------------------------------------------------------
+    # 論文與程式碼中，DNN 訓練前通常會做 Normalize 以加速收斂
+    print(f"\n[Step 2] 數據標準化 (Standardization)")
+    
+    mean_x = X_train_c.mean()
+    std_x = X_train_c.std()
+    
+    # 公式: (input - mean) / std
+    X_norm_c = (X_sample_c - mean_x) / std_x
+    
+    print(f"    Stats -> Mean: {mean_x:.4f}, Std: {std_x:.4f}")
+    print(f"    Normalized Input (Still Complex):\n{X_norm_c}")
+
+    # ---------------------------------------------------------
+    # 3. 轉換為 Tensor (Input View)
+    # ---------------------------------------------------------
+    print(f"\n[Step 3] DNN 輸入張量 (Complex to Real Tensor)")
+    # 呼叫 Neural_estimators.py 的 helper function
+    # 邏輯: 轉置 -> 實部區塊堆疊虛部區塊
+    inp_torch = complex_to_real_torch(X_norm_c)
+    
+    print(f"    Shape: {inp_torch.shape} (Samples x Input_Dim)")
+    print(f"    說明: 第一維是 Sample，第二維是 [Real_Feat_1, Real_Feat_2... Imag_Feat_1...]")
+    print(f"    Content:\n{inp_torch.cpu().numpy()}")
+
+    # ---------------------------------------------------------
+    # 4. 模型推論 (Model Forward)
+    # ---------------------------------------------------------
+    print(f"\n[Step 4] 進入 DNN 模型 (ChannelNet)")
+    
+    # 自動計算維度
+    input_dim = inp_torch.shape[1]      # 例如 2個Pilot * 2(實虛) = 4
+    output_dim = Y_train_c.shape[0] * 2 # 根據 Dataset 的 Label 形狀決定
+    
+    # 初始化模型 (隨機權重)
+    dnn = ChannelNet(input_dim, output_dim).to(device)
+    dnn.eval() # 設定為推論模式 (不更新權重)
+    
+    with torch.no_grad():
+        out_torch = dnn(inp_torch)
+        
+    print(f"    DNN Output Tensor (Raw Real Values)")
+    print(f"    Shape: {out_torch.shape}")
+    print(f"    Content (Tanh Output):\n{out_torch.cpu().numpy()}")
+
+    # ---------------------------------------------------------
+    # 5. 還原輸出 (Output View)
+    # ---------------------------------------------------------
+    print(f"\n[Step 5] 還原為複數輸出 (Reconstructed Output)")
+    out_c = real_torch_to_complex(out_torch)
+    
+    print(f"    Shape: {out_c.shape} (Features x Samples)")
+    print(f"    Content:\n{out_c}")
+    print("="*60 + "\n")
+
+def vis_elm():
+    print("\n" + "="*80)
+    print("   Visualizing C-ELM I/O (Complex-Valued, Single Window)")
+    print("="*80)
+
+    # 1. 準備單一視窗數據 (One Window)
+    # ---------------------------------------------------------
+    sys = OFDMSystem()
+    
+    # 模擬數據: 2個特徵 (Pilot), 1個樣本 (Sample)
+    # 這裡直接手動定義數據，讓你看得更清楚 (模擬 Pilot 1 和 Pilot 2)
+    # Shape: (Features=2, Samples=1)
+    input_complex = np.array([
+        [-0.5 + 0.5j],  # Pilot 1 (Head)
+        [ 0.8 - 0.2j]   # Pilot 2 (Tail)
+    ])
+    
+    # 模擬標準化 (Mean=0, Std=1)
+    input_norm = input_complex # 簡化展示，假設已標準化
+
+    # 2. 轉換格式 (Transpose only)
+    # ---------------------------------------------------------
+    # ELM 只需要轉置為 (Samples, Features)，不需要拆分實虛部
+    elm_input = input_norm.T
+    
+    print(f"[Input] 進入 ELM 前 (Transposed)")
+    print(f"Shape: {elm_input.shape} (Sample x Feature)")
+    print(f"Vector: {np.array2string(elm_input, precision=2, separator=', ')}")
+
+    # 3. 初始化 C-ELM 模型
+    # ---------------------------------------------------------
+    input_dim = 2  # 2 Pilots
+    hidden_dim = 4 # 隱藏層神經元數量 (為了展示方便設小一點)
+    output_dim = 2 # 2 Data symbols (中間補值)
+    
+    elm = ELM_Estimator(input_dim, hidden_dim, output_dim)
+    
+    # 為了展示，我們固定隨機權重，這樣你的結果會跟我的一樣
+    np.random.seed(42) 
+    elm.W_in = (np.random.randn(hidden_dim, input_dim) + 1j * np.random.randn(hidden_dim, input_dim)) * 0.5
+    elm.b = np.zeros((hidden_dim, 1), dtype=complex) # 簡化 Bias
+    # 隨機生成 Output weights (模擬已訓練狀態)
+    elm.W_out = (np.random.randn(hidden_dim, output_dim) + 1j * np.random.randn(hidden_dim, output_dim)) * 0.5
+
+    # 4. 執行推論 (Forward Pass)
+    # ---------------------------------------------------------
+    # Step A: 隱藏層映射 H = Activation(X * W_in + b)
+    # 這裡假設 activation 是簡單的 identity 或 tanh，程式碼中使用 sigmoid
+    # 我們手動跑一次矩陣乘法給你看
+    
+    print(f"\n[Process] 內部矩陣運算 (Matrix Multiplication)")
+    print(f"1. Input {elm_input.shape} dot W_in.T {elm.W_in.T.shape} -> Hidden Layer")
+    
+    H = np.matmul(elm_input, elm.W_in.T) + elm.b.T
+    # Activation (假設用 Tanh 處理複數)
+    H_act = np.tanh(H) 
+    
+    print(f"   Hidden Layer Output (Complex):")
+    print(f"   {np.array2string(H_act, precision=2, separator=', ')}")
+
+    # Step B: 輸出層映射 Y = H * W_out
+    print(f"2. Hidden {H_act.shape} dot W_out {elm.W_out.shape} -> Output")
+    
+    elm_output = np.matmul(H_act, elm.W_out)
+
+    print(f"\n[Output] ELM 輸出結果 (Raw Output)")
+    print(f"Shape: {elm_output.shape} (Sample x Output_Dim)")
+    print(f"Vector: {np.array2string(elm_output, precision=2, separator=', ')}")
+
+    # 5. 還原格式
+    # ---------------------------------------------------------
+    final_output = elm_output.T
+    print(f"\n[Final] 還原為 OFDM 格式 (Transposed Back)")
+    print(f"Shape: {final_output.shape} (Features x Sample)")
+    print(f"Vector:\n{final_output}")
+    print("="*80)
+
+def vis_lml():
+    print("\n" + "="*80)
+    print("   Visualizing LML Estimator I/O & Weight Matrix W")
+    print("="*80)
+
+    # 1. 準備環境與數據
+    # ---------------------------------------------------------
+    sys = OFDMSystem()
+    lml = LMLestimator(sys)
+    
+    # 模擬場景: Df=3 (Pilot-Data-Data-Pilot)
+    # M=2 (輸入特徵: 頭尾 Pilot), S=2 (輸出目標: 中間 Data)
+    print(f"[Setup] System Parameters")
+    print(f"   Df (Pilot Spacing): {sys.Df}")
+    print(f"   Input Dim (M): {sys.M} (Pilots)")
+    print(f"   Output Dim (S): {sys.S} (Data Symbols)")
+
+    # 為了讓矩陣有意義，我們生成一組模擬的訓練數據 (Batch)
+    # 假設有 100 個訓練樣本
+    n_train = 100
+    # X_train: 頭尾的 Pilot (Input)
+    X_train = (np.random.randn(sys.M, n_train) + 1j * np.random.randn(sys.M, n_train))
+    # Y_train: 中間的 Data (Target) -> 稍微跟 X 有點線性關係模擬真實通道
+    # 假設完美的線性插值: Data1 = 2/3*P1 + 1/3*P2 ...
+    Y_train = (np.random.randn(sys.S, n_train) + 1j * np.random.randn(sys.S, n_train))
+
+    # 2. 訓練過程 (算出 Matrix W)
+    # ---------------------------------------------------------
+    
+    # 呼叫 LML 內部的解權重函式
+    W_hat = lml._solve_weights(X_train, Y_train)
+    
+    print(f"\n   ★ Trained Weight Matrix W (Shape {W_hat.shape}):")
+    print(f"   (Row 0 負責預測第一個 Data, Row 1 負責預測第二個 Data)")
+    print("-" * 50)
+    # 格式化列印矩陣
+    print(np.array2string(W_hat, precision=4, suppress_small=True, separator=', '))
+    print("-" * 50)
+
+    # 3. 推論過程 (Inference)
+    # ---------------------------------------------------------
+    print(f"\n[Step 2] 推論階段 (Inference on Single Window)")
+    
+    # 拿一個測試樣本 (2個 Pilot)
+    # 為了展示清楚，我們用直式向量表示
+    x_test = np.array([[-0.5 + 0.5j], 
+                       [ 0.8 - 0.2j]]) # Shape (2, 1)
+    
+    print(f"   Input Vector (Pilots):\n{x_test}")
+    
+    # 矩陣乘法: y = W * x
+    y_est = np.matmul(W_hat, x_test)
+    
+    print(f"\n   Output Vector (Estimated Data):\n{y_est}")
+
+    print("="*80)
+
+if __name__ == "__main__":
+    # vis_DNN()
+    # vis_elm()
+    vis_lml()
