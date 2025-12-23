@@ -50,7 +50,7 @@ Project_Root/
 我們建議使用虛擬環境，以避免與系統其他的 Python 套件產生衝突。以下是 Conda 的安裝方式
 
 ```bash
-# 1. 建立 Python 3.8 環境 (環境名稱設為 ofdm_env)
+# 1. 建立 Python 環境 (環境名稱設為 ofdm_env)
 conda create -n ofdm_env python=3.10.0
 
 # 2. 啟動環境
